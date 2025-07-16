@@ -1,102 +1,125 @@
 import 'dart:convert';
-import 'dart:io';
-
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
+import 'package:pet_match_backend/database.dart'; // Asegúrate de que esta importación esté bien
 
-// Middleware para habilitar CORS
-Middleware corsMiddleware() {
+Middleware corsHeaders() {
   return (Handler handler) {
     return (Request request) async {
+      // Si es OPTIONS, responde con los headers CORS
       if (request.method == 'OPTIONS') {
-        return Response.ok('', headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-          'Access-Control-Allow-Headers': 'Origin, Content-Type',
-        });
+        return Response.ok('',
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Origin, Content-Type, Authorization',
+          }
+        );
       }
-
+      // Para otros métodos, agrega los headers CORS a la respuesta
       final response = await handler(request);
       return response.change(headers: {
         ...response.headers,
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Origin, Content-Type',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Origin, Content-Type, Authorization',
       });
     };
   };
 }
 
 void main() async {
-  final router = Router()
-    ..get('/api/pets', _getPets)
-    ..get('/api/pet/<id>', _getPet)
-    ..post('/api/pet', _createPet)
-    ..post('/api/login', _loginUsuario);
+  final db = Database();
 
-  final handler = Pipeline()
+  final router = Router()
+    ..get('/api/pets', (Request req) => _getPets(db))
+    ..post('/api/pets', (Request req) => _createPet(db, req)) // <-- agrega esta línea
+    ..get('/api/pet/<id>', (Request req, String id) => _getPet(db, id))
+    ..post('/api/pet', (Request req) => _createPet(db, req))
+    ..post('/api/login', (Request req) => _loginUsuario(db, req))
+    ..post('/api/register', (Request req) => _registerUsuario(db, req));
+
+  final handler = const Pipeline()
+      .addMiddleware(corsHeaders()) // <-- Agrega este middleware primero
       .addMiddleware(logRequests())
-      .addMiddleware(corsMiddleware()) // Habilita CORS
       .addHandler(router);
 
-  // Escuchar en todas las interfaces de red (para Chrome y dispositivos reales)
-  final server = await shelf_io.serve(handler, InternetAddress.anyIPv4, 8080);
-
-  print('✅ Servidor corriendo en http://localhost:8080/api/pets');
+  // Inicia el servidor en el puerto 8080
+  await shelf_io.serve(handler, 'localhost', 8080);
+  print('Servidor corriendo en http://localhost:8080/api/pets');
 }
 
-// Obtener todas las mascotas
-Response _getPets(Request request) {
-  final pets = [
-    {'id': 1, 'name': 'Luna', 'age': 3, 'type': 'Dog'},
-    {'id': 2, 'name': 'Max', 'age': 2, 'type': 'Cat'}
-  ];
+// Función para manejar la solicitud de obtener todas las mascotas
+Future<Response> _getPets(Database db) async {
+  final pets = await db.query('SELECT * FROM mascota');
   return Response.ok(jsonEncode(pets), headers: {'Content-Type': 'application/json'});
 }
 
-// Obtener una mascota por ID
-Response _getPet(Request request, String id) {
-  final pet = {'id': id, 'name': 'Luna', 'age': 3, 'type': 'Dog'};
+// Función para manejar la solicitud de obtener una mascota por ID
+Future<Response> _getPet(Database db, String id) async {
+  final pet = await db.query(
+    'SELECT * FROM mascota WHERE id = @id',
+    substitutionValues: {'id': int.parse(id)},
+  );
+  if (pet.isEmpty) {
+    return Response.notFound('Pet not found');
+  }
   return Response.ok(jsonEncode(pet), headers: {'Content-Type': 'application/json'});
 }
 
-Future<Response> _loginUsuario(Request request) async {
+// Función para manejar la creación de una nueva mascota
+Future<Response> _createPet(Database db, Request request) async {
+  final payload = await request.readAsString();
+  final pet = jsonDecode(payload);
+  await db.query(
+    'INSERT INTO mascota (nombre, edad, tipo_animal, sexo, ciudad, foto_url, estado, id_usuario) VALUES (@nombre, @edad, @tipo_animal, @sexo, @ciudad, @foto_url, @estado, @id_usuario)',
+    substitutionValues: {
+      'nombre': pet['nombre'],
+      'edad': pet['edad'],
+      'tipo_animal': pet['tipo_animal'],
+      'sexo': pet['sexo'],
+      'ciudad': pet['ciudad'],
+      'foto_url': pet['foto_url'],
+      'estado': pet['estado'],
+      'id_usuario': pet['id_usuario'],
+    },
+  );
+  return Response.ok(jsonEncode({'message': 'Pet created', 'pet': pet}), headers: {'Content-Type': 'application/json'});
+}
+
+// Handler de login
+Future<Response> _loginUsuario(Database db, Request request) async {
   final payload = await request.readAsString();
   final data = jsonDecode(payload);
 
   final username = data['username'];
   final password = data['password'];
 
-  // ⚠️ Aquí va validación real, pero por ahora:
-  if (username == 'admin' && password == '1234') {
-    final response = {
-      'status': 'ok',
-      'user': {
-        'id': 1,
-        'username': username,
-        'token': 'fake-jwt-token'
-      }
-    };
-    return Response.ok(
-      jsonEncode(response),
-      headers: {'Content-Type': 'application/json'},
-    );
+  final result = await db.query(
+    'SELECT * FROM usuarios WHERE username = @username AND password = @password',
+    substitutionValues: {
+      'username': username,
+      'password': password,
+    },
+  );
+
+  if (result.isNotEmpty) {
+    return Response.ok(jsonEncode({'message': 'Login exitoso'}), headers: {'Content-Type': 'application/json'});
   } else {
-    return Response.forbidden(
-      jsonEncode({'error': 'Credenciales inválidas'}),
-      headers: {'Content-Type': 'application/json'},
-    );
+    return Response.forbidden(jsonEncode({'error': 'Credenciales inválidas'}), headers: {'Content-Type': 'application/json'});
   }
 }
 
-
-// Crear una nueva mascota
-Future<Response> _createPet(Request request) async {
+// Handler de registro
+Future<Response> _registerUsuario(Database db, Request request) async {
   final payload = await request.readAsString();
-  final pet = jsonDecode(payload);
-  return Response.ok(
-    jsonEncode({'message': 'Pet created', 'pet': pet}),
-    headers: {'Content-Type': 'application/json'},
-  );
+  final data = jsonDecode(payload);
+
+  final username = data['username'];
+  final password = data['password'];
+
+  // Aquí deberías agregar validaciones y lógica para el registro del usuario
+
+  return Response.ok(jsonEncode({'message': 'Registro exitoso'}), headers: {'Content-Type': 'application/json'});
 }

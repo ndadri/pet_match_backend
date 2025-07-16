@@ -1,6 +1,4 @@
 import 'package:postgres/postgres.dart';
-import 'package:pet_match_backend/database.dart';
-
 
 class Database {
   static final Database _instance = Database._internal();
@@ -26,11 +24,12 @@ class Database {
     }
   }
 
-  //Metodo para hacer consultas a la base de datos
+  // Método para hacer consultas a la base de datos
   Future<List<Map<String, Map<String, dynamic>>>> query(String sql, {Map<String, dynamic>? substitutionValues}) async {
     await open();
     return await connection.mappedResultsQuery(sql, substitutionValues: substitutionValues);
   }
+
   // Método para cerrar la conexión
   Future<void> close() async {
     await connection.close();

@@ -36,11 +36,12 @@ void main() async {
 
   final router = Router()
     ..get('/api/pets', (Request req) => _getPets(db))
-    ..post('/api/pets', (Request req) => _createPet(db, req)) // <-- agrega esta línea
+    ..post('/api/pets', (Request req) => _createPet(db, req))
     ..get('/api/pet/<id>', (Request req, String id) => _getPet(db, id))
     ..post('/api/pet', (Request req) => _createPet(db, req))
     ..post('/api/login', (Request req) => _loginUsuario(db, req))
-    ..post('/api/register', (Request req) => _registerUsuario(db, req));
+    ..post('/api/register', (Request req) => _registerUsuario(db, req))
+    ..get('/api/mascotas_usuario/<idUsuario>', (Request req, String idUsuario) => _getMascotasPorUsuario(db, idUsuario));
 
   final handler = const Pipeline()
       .addMiddleware(corsHeaders()) // <-- Agrega este middleware primero
@@ -199,6 +200,14 @@ Future<Response> _forgotPassword(Database db, Request request) async {
       headers: {'Content-Type': 'application/json'},
     );
   }
+}
+
+Future<Response> _getMascotasPorUsuario(Database db, String idUsuario) async {
+  final mascotas = await db.query(
+    'SELECT * FROM mascota WHERE id_usuario = @id_usuario',
+    substitutionValues: {'id_usuario': int.parse(idUsuario)},
+  );
+  return Response.ok(jsonEncode(mascotas), headers: {'Content-Type': 'application/json'});
 }
 
 
